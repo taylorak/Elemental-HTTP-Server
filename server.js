@@ -1,9 +1,9 @@
 var http = require('http');
 var fs = require('fs');
 
-var root = '/public';
+var root = './public';
 var contentType = {
-  'html' : 'tex/html',
+  'html' : 'text/html',
   'css' : 'text/css'
 }
 
@@ -14,12 +14,23 @@ function shittyRouter() {
     handleRequest(req, res);
   })
 
-  function use(method, pattern, handler) {
-    var pattern = new RegExp('^' + pattern + '$');
+  function use(method, uri, handler) {
+
+    if(method === '*') {
+      var uriPattern = new RegExp('.*');
+    } else {
+      var uriPattern = new RegExp('^' + uri + '$');
+    }
+
+    if(uri === '*') {
+      var methodPattern = new RegExp('.*');
+    } else {
+      var methodPattern = new RegExp('^' + method + '$');
+    }
 
     var route = {
-      method: method,
-      pattern: pattern,
+      method: methodPattern,
+      url: uriPattern,
       handler: handler
     }
 
@@ -28,17 +39,20 @@ function shittyRouter() {
 
   function handleRequest(request, response) {
     console.log('handle request');
-    routes.forEach(function(route) {
-      if(route.pattern.test(request.url)) {
-        if(route.method === request.method) {
-          route.handler(request, response);
+
+    for(var i = 0; i < routes.length; i++) {
+      if(routes[i].url.test(request.url)) {
+        if(routes[i].method.test(request.method)) {
+          routes[i].handler(request, response);
+          return;
         }
       }
-    })
+    }
   }
 
   function listen(port, host, callback) {
     server.listen(port, callback);
+    console.log(routes);
   }
 
   return {
@@ -47,10 +61,29 @@ function shittyRouter() {
   }
 }
 
+
+function render(template, params) {
+  var readableStream = fs.createReadStream('templates/' + template + '.html');
+  var templateString = '';
+
+  readableStream.on('data', function(data) {
+    templateString += data;
+  })
+
+  readableStream.on('end', function() {
+    var re = /\[\[(.*)\]\]/
+    var match;
+    while(match = re.exec(templateString)) {
+      templateString = templateString.replace(match[0], params[match[1]])
+    }
+    return templateString;
+  })
+
+}
+
 var server = shittyRouter();
 
 server.use('POST', '/elements', function(request, response) {
-  console.log(request.headers);
   var formData = {};
 
   var message = '';
@@ -65,6 +98,8 @@ server.use('POST', '/elements', function(request, response) {
       formData[entryValues[0]] = entryValues[1];
     }
 
+    console.log('POST');
+    console.log(render('element', formData));
     response.writeHead('200', 'OK', {'Content-Type' : 'application/json'});
     response.write('{"HELLO" : "GOODBYE"}');
     response.end();
@@ -72,72 +107,48 @@ server.use('POST', '/elements', function(request, response) {
 
 })
 
+server.use('GET', '/.*', function(request, response) {
+  console.log(request.url);
+  if(request.url === '/') {
+    request.url = '/index.html';
+  }
+
+  var extension = request.url.substr(request.url.lastIndexOf('.') + 1);
+
+  var length;
+  fs.stat(root + request.url, function(err, stat) {
+    length = stat.size;
+  })
+  response.writeHead('200', 'OK', {
+      'Date' : new Date(),
+      'Content-Type' : contentType[extension],
+      'Content-Length' : Buffer.byteLength(length)
+    });
+
+  var readableStream = fs.createReadStream(root + request.url);
+  readableStream.pipe(response);
+
+  readableStream.on('end', function() {
+    response.end();
+  })
+})
+
+server.use('*','*', function(request, response) {
+  console.log('NOT FOUND');
+  notFound(request, response);
+})
+
 server.listen(8080, 'localhost', function() {
   console.log('Server listening on: http://localhost:%s', this.port)
 });
 
-// var server = http.createServer(function(req, res) {
 
-//   var uri = req.url.split('?').shift();
+function notFound(request, response) {
+  var readableStream = fs.createReadStream('public/404.html');
+  response.writeHead('404', 'NOT FOUND', {});
+  readableStream.pipe(response);
 
-//   handleRequest('GET', '/elements', function(request, response) {
-
-//   })
-
-//   if(req.method === 'POST') {
-//     var writeStream = fs.createWriteStream('data.txt', 'utf8');
-//     req.pipe(writeStream);
-//     res.writeHead('200', 'OK', {'Content-Type' : 'application/json'});
-//     res.write('{HELLO : GOODBYE}');
-//     res.end();
-
-//     req.on('end', function() {
-//       console.log('end request');
-//       writeStream.end();
-//     })
-//   }
-
-//   fs.stat(uri, function(err, stat) {
-//     if(err) {
-//       if(err.code === 'ENOENT') {
-//         console.log('not found error');
-//         notFound(request);
-//       } else {
-//         console.log("server error");
-//         serverError();
-//       }
-//     }
-//     else {
-
-
-//     }
-
-//   })
-
-//   //var queryObj = url.parse(req.url);
-//   // console.log(req.headers);
-//   // console.log(req.method);
-//   // var uri = req.url.split('?').shift();
-//   //var query = req.url.split('?').splice(1);
-//   // console.log(query);
-//   //console.log(queryObj.query);
-
-//   // switch(uri) {
-//   //   case '/elements':
-//   //     if(req.method === 'POST') {
-//   //       console.log('post');
-//   //       res.writeHead('200', 'OK', {'Content-Type' : 'application/json'})
-//   //       req.pipe(res);
-//   //       req.on('end', function(){
-//   //         res.end();
-//   //       })
-//   //     }
-//   //     break;
-//   //   default:
-//   // }
-
-// })
-
-// server.listen(PORT, function() {
-//   console.log('Server listening on: http://localhost:%s', PORT)
-// })
+  readableStream.on('end', function() {
+    response.end();
+  })
+}
