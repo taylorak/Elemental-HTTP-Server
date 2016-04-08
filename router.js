@@ -32,12 +32,6 @@ function router() {
     routes.push(route);
   }
 
-  function setupNext(request, response) {
-    for(var i = routes.length - 1; i > 0; i--) {
-      routes[i - 1].next = routes[i - 1].nextHandler.bind(null, request, response, routes[i].next);
-    }
-  }
-
   function handleRequest(request, response) {
     console.log('handle request');
 
@@ -54,13 +48,13 @@ function router() {
     for(var j = matchingRoutes.length - 1; j > 0; j--) {
       matchingRoutes[j - 1].next = matchingRoutes[j].handler.bind(null, request, response, matchingRoutes[j].next);
     }
+
     console.log(matchingRoutes);
     matchingRoutes[0].handler(request, response, matchingRoutes[0].next);
   }
 
   function listen(port, host, callback) {
     server.listen(port, callback);
-    //console.log(routes);
   }
 
   return {
