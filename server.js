@@ -1,6 +1,7 @@
-var http = require('http');
 var fs = require('fs');
 var secret = require('./secret');
+var router = require('./router');
+var render = require('./templateHelper');
 
 var root = './public';
 
@@ -9,104 +10,7 @@ var contentType = {
   'css' : 'text/css'
 }
 
-function shittyRouter() {
-  var routes = [];
-
-  var server = http.createServer(function(req, res) {
-    handleRequest(req, res);
-  })
-
-  function use(method, uri, handler) {
-
-    if(method === '*') {
-      var uriPattern = new RegExp('.*');
-    } else {
-      var uriPattern = new RegExp('^' + uri + '$');
-    }
-
-    if(uri === '*') {
-      var methodPattern = new RegExp('.*');
-    } else {
-      var methodPattern = new RegExp('^' + method + '$');
-    }
-
-    var route = {
-      method: methodPattern,
-      url: uriPattern,
-      handler: handler,
-      nextHandler: null,
-      next: null
-    }
-
-    routes.push(route);
-  }
-
-  function setupNext(request, response) {
-    for(var i = routes.length - 1; i > 0; i--) {
-      routes[i - 1].next = routes[i - 1].nextHandler.bind(null, request, response, routes[i].next);
-    }
-  }
-
-  function handleRequest(request, response) {
-    console.log('handle request');
-
-    var matchingRoutes = [];
-
-    for(var i = 0; i < routes.length; i++) {
-      if(routes[i].url.test(request.url)) {
-        if(routes[i].method.test(request.method)) {
-          matchingRoutes.push(routes[i]);
-        }
-      }
-    }
-
-    for(var j = matchingRoutes.length - 1; j > 0; j--) {
-      matchingRoutes[j - 1].next = matchingRoutes[j].handler.bind(null, request, response, matchingRoutes[j].next);
-    }
-    console.log(matchingRoutes);
-    matchingRoutes[0].handler(request, response, matchingRoutes[0].next);
-  }
-
-  function listen(port, host, callback) {
-    server.listen(port, callback);
-    //console.log(routes);
-  }
-
-  return {
-    use : use,
-    listen : listen
-  }
-}
-
-
-function render(template, params, cb) {
-  var readableStream = fs.createReadStream('templates/' + template + '.html');
-  var templateString = '';
-
-  readableStream.on('data', function(data) {
-    templateString += data;
-  })
-
-  readableStream.on('error', function(err) {
-    cb(err, templateString);
-  })
-
-  readableStream.on('end', function() {
-    var re = /\[\[(.*)\]\]/
-    var match;
-    while(match = re.exec(templateString)) {
-      var replacement = params[match[1]];
-      if(replacement === undefined) {
-        replacement = '';
-      }
-      templateString = templateString.replace(match[0], replacement)
-    }
-    cb(null, templateString);
-  })
-
-}
-
-var server = shittyRouter();
+var server = router();
 
 server.use('POST|PUT|DELETE', '/.*', function(request, response, next) {
   if(!request.headers.authorization) {
@@ -164,7 +68,8 @@ server.use('POST', '/elements', function(request, response, next) {
                   file !== '.keep' &&
                   file !== 'css' &&
                   file !== 'index.html' &&
-                  file !== '404.html'
+                  file !== '404.html' &&
+                  file !== '401.html'
                 )
               }).reduce(function(prev, curr) {
                 prev.elementList += '<li><a href="/' + curr + '">' + curr.replace('.html', '') +'</a></li>';
@@ -197,6 +102,8 @@ server.use('POST', '/elements', function(request, response, next) {
 })
 
 server.use('PUT', '/.*', function(request, response, next) {
+  console.log('PUT');
+
   var outputPath = root + request.url;
 
   fs.stat(outputPath, function(err, stat) {
@@ -223,6 +130,7 @@ server.use('PUT', '/.*', function(request, response, next) {
 
 server.use('DELETE', '/.*', function(request, response, next) {
   console.log('DELETE');
+
   fs.stat(root + request.url, function(err, stat) {
     if(err) {
       response.writeHead('500', 'SERVER ERROR', {'Content-Type' : 'application/json'})

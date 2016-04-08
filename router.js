@@ -1,4 +1,6 @@
-function customRouter() {
+var http = require('http');
+
+function router() {
   var routes = [];
 
   var server = http.createServer(function(req, res) {
@@ -66,3 +68,5 @@ function customRouter() {
     listen : listen
   }
 }
+
+module.exports = router;
