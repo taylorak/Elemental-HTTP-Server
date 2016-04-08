@@ -11,6 +11,7 @@ function shittyRouter() {
   var routes = [];
 
   var server = http.createServer(function(req, res) {
+    setupNext(req, res);
     handleRequest(req, res);
   })
 
@@ -31,10 +32,22 @@ function shittyRouter() {
     var route = {
       method: methodPattern,
       url: uriPattern,
-      handler: handler
+      handler: handler,
+      nextHandler: null,
+      next: null
+    }
+
+    if(routes[routes.length - 1]) {
+      routes[routes.length - 1].nextHandler = route.handler;
     }
 
     routes.push(route);
+  }
+
+  function setupNext(request, response) {
+    for(var i = routes.length - 1; i > 0; i--) {
+      routes[i - 1].next = routes[i - 1].nextHandler.bind(null, request, response, routes[i].next);
+    }
   }
 
   function handleRequest(request, response) {
@@ -43,7 +56,7 @@ function shittyRouter() {
     for(var i = 0; i < routes.length; i++) {
       if(routes[i].url.test(request.url)) {
         if(routes[i].method.test(request.method)) {
-          routes[i].handler(request, response);
+          routes[i].handler(request, response, routes[i].next);
           return;
         }
       }
@@ -62,7 +75,7 @@ function shittyRouter() {
 }
 
 
-function render(template, params) {
+function render(template, params, cb) {
   var readableStream = fs.createReadStream('templates/' + template + '.html');
   var templateString = '';
 
@@ -70,23 +83,31 @@ function render(template, params) {
     templateString += data;
   })
 
+  readableStream.on('error', function(err) {
+    cb(err, templateString);
+  })
+
   readableStream.on('end', function() {
     var re = /\[\[(.*)\]\]/
     var match;
     while(match = re.exec(templateString)) {
-      templateString = templateString.replace(match[0], params[match[1]])
+      var replacement = params[match[1]];
+      if(replacement === undefined) {
+        replacement = '';
+      }
+      templateString = templateString.replace(match[0], replacement)
     }
-    return templateString;
+    cb(null, templateString);
   })
 
 }
 
 var server = shittyRouter();
 
-server.use('POST', '/elements', function(request, response) {
+server.use('*', '*', function(request, response, next) {
   var formData = {};
-
   var message = '';
+
   request.on('data', function(data) {
     message += data.toString();
   })
@@ -98,42 +119,107 @@ server.use('POST', '/elements', function(request, response) {
       formData[entryValues[0]] = entryValues[1];
     }
 
-    console.log('POST');
-    console.log(render('element', formData));
-    response.writeHead('200', 'OK', {'Content-Type' : 'application/json'});
-    response.write('{"HELLO" : "GOODBYE"}');
-    response.end();
+    request.formData = formData;
+    next();
+
   })
 
 })
 
-server.use('GET', '/.*', function(request, response) {
+server.use('POST', '/elements', function(request, response, next) {
+  render('element', request.formData, function(err, template) {
+
+    var outputPath = root + '/' + request.formData.elementName + '.html'
+    fs.stat(outputPath, function(err, stat) {
+      if(err) {
+        if(err.code === 'ENOENT') {
+          fs.writeFile(outputPath, template, function(err) {
+            if(err) return serverError(request, response);
+            response.writeHead('200', 'OK', {'Content-Type' : 'application/json'});
+            response.write(JSON.stringify({ sucess : true }));
+            response.end();
+          });
+        } else {
+          return serverError(request, response);
+        }
+      } else {
+        response.writeHead('500', 'SERVER ERROR', {'Content-Type' : 'application/json'});
+        response.write(JSON.stringify({ error : 'resource ' + request.url + ' already exists' }));
+        response.end();
+      }
+    })
+
+  })
+})
+
+server.use('PUT', '/.*', function(request, response, next) {
+
+})
+
+server.use('DELETE', '/.*', function(request, response, next) {
+  console.log(root + request.url);
+  fs.stat(root + request.url, function(err, stat) {
+    if(err) {
+      response.writeHead('500', 'SERVER ERROR', {'Content-Type' : 'application/json'})
+      response.write('{ "error" : "resource ' + request.url + 'does not exist" }');
+      response.end();
+      return;
+    }
+
+    fs.unlink(root + request.url, function(err) {
+      if(err) {
+        return serverError();
+      }
+
+      response.writeHead('200', 'OK', {'Content-Type' : 'application/json'});
+      response.write('{"success" : "true"}');
+      response.end();
+    })
+
+  })
+
+})
+
+server.use('GET', '/.*', function(request, response, next) {
   console.log(request.url);
+
   if(request.url === '/') {
     request.url = '/index.html';
   }
 
   var extension = request.url.substr(request.url.lastIndexOf('.') + 1);
 
-  var length;
   fs.stat(root + request.url, function(err, stat) {
-    length = stat.size;
-  })
-  response.writeHead('200', 'OK', {
-      'Date' : new Date(),
-      'Content-Type' : contentType[extension],
-      'Content-Length' : Buffer.byteLength(length)
-    });
+    if(err) {
+      if(err.code === 'ENOENT') {
+        return notFound(request, response);
+      } else {
+        return serverError(request, response);
+      }
+    }
 
-  var readableStream = fs.createReadStream(root + request.url);
-  readableStream.pipe(response);
+    response.writeHead('200', 'OK', {
+        'Date' : new Date(),
+        'Content-Type' : contentType[extension],
+        'Content-Length' : stat.size
+      });
 
-  readableStream.on('end', function() {
-    response.end();
+    var readableStream = fs.createReadStream(root + request.url);
+    readableStream.pipe(response);
+
+    readableStream.on('error', function() {
+      return serverError(request, response);
+    })
+
+    readableStream.on('end', function() {
+      response.end();
+    })
+
   })
+
 })
 
-server.use('*','*', function(request, response) {
+server.use('*','*', function(request, response, next) {
   console.log('NOT FOUND');
   notFound(request, response);
 })
@@ -151,4 +237,11 @@ function notFound(request, response) {
   readableStream.on('end', function() {
     response.end();
   })
+}
+
+function serverError(request, response) {
+  response.write('HTTP/1.1 500 SERVER ERROR\r\n');
+  response.write('Date: ' + new Date() + '\r\n');
+  response.write('\r\n')
+  response.end();
 }
