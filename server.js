@@ -1,5 +1,6 @@
 var http = require('http');
 var fs = require('fs');
+var secret = require('./secret');
 
 var root = './public';
 
@@ -12,7 +13,6 @@ function shittyRouter() {
   var routes = [];
 
   var server = http.createServer(function(req, res) {
-    //setupNext(req, res);
     handleRequest(req, res);
   })
 
@@ -107,6 +107,24 @@ function render(template, params, cb) {
 }
 
 var server = shittyRouter();
+
+server.use('POST|PUT|DELETE', '/.*', function(request, response, next) {
+  if(!request.headers.authorization) {
+    return authorizationError(request, response);
+  } else {
+    var encodedString = request.headers.authorization.split(' ').pop();
+    console.log(encodedString);
+    var base64Buffer = new Buffer(encodedString, 'base64');
+    var decodedString = base64Buffer.toString();
+
+    var authCred = decodedString.split(':');
+    if(authCred[0] === secret.username && authCred[1] === secret.password) {
+      next();
+    } else {
+      return authorizationError(request, response);
+    }
+  }
+})
 
 server.use('*', '*', function(request, response, next) {
   var formData = {};
@@ -291,4 +309,14 @@ function serverError(request, response) {
   response.write('Date: ' + new Date() + '\r\n');
   response.write('\r\n')
   response.end();
+}
+
+function authorizationError(request, response) {
+  var readableStream = fs.createReadStream('./public/401.html');
+  response.writeHead(401, 'UNAUTHORIZED', { 'WWW-Authenticate' : 'Basic realm="auth"' });
+  readableStream.pipe(response);
+
+  readableStream.on('end', function() {
+    response.end();
+  })
 }
